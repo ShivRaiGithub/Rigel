@@ -1,8 +1,8 @@
 import "dotenv/config";
 import { Bot, GrammyError, HttpError } from "grammy";
 import { Messages } from "./messages";
-import { parseIntent } from "../llm/intentParser";
-import { getSession, updateSession } from "../store/userStore";
+import { handleMessage } from "./conversations";
+import { getSession } from "../store/userStore";
 
 // ─── Validate env ─────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -48,38 +48,18 @@ bot.command("list", async (ctx) => {
   }
 });
 
-// ─── Text messages → Intent parser ────────────────────────────────────────────
+// ─── Text messages → Conversation state machine ───────────────────────────────
 bot.on("message:text", async (ctx) => {
   try {
     const userId = ctx.from?.id;
-    const userMessage = ctx.message.text;
-
     if (!userId) return;
 
-    // Get or create session
-    const session = getSession(userId);
+    const text = ctx.message.text;
 
-    // Append the incoming message to history
-    const updatedHistory = [
-      ...session.conversationHistory,
-      `User: ${userMessage}`,
-    ];
-    updateSession(userId, { conversationHistory: updatedHistory });
+    // Let Grammy command middleware handle slash commands
+    if (text.startsWith("/")) return;
 
-    // Parse intent via Gemini
-    console.log(`\n[Bot] User ${userId} said: "${userMessage}"`);
-    const result = await parseIntent(userMessage, updatedHistory);
-
-    // Log the full parsed intent for Stage 1 verification
-    console.log("Parsed intent:", JSON.stringify(result, null, 2));
-
-    // ── Stage 1 stub reply ──────────────────────────────────────────────────
-    // Full conversation flow (clarification, confirmation, deployment)
-    // is implemented in Stage 2.
-    await ctx.reply(
-      "⚙️ Got it, processing… _(Stage 2 will handle this fully)_",
-      { parse_mode: "Markdown" }
-    );
+    await handleMessage(ctx, userId, text);
   } catch (err) {
     console.error("[message:text] Error:", err);
     await ctx.reply("Something went wrong. Please try again.");

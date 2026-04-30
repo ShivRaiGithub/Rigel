@@ -1,4 +1,5 @@
 import { DeployedWorkflow, ParsedIntent } from "../workflows/types";
+import { WorkflowTemplate, TEMPLATES } from "../templates";
 
 export const Messages = {
   welcome(): string {
@@ -32,12 +33,20 @@ What would you like to automate?`;
 💰 *Balance Alert*
 "Alert me when my USDC on Base drops below 500"
 
-*Commands:*
+*AI Mode (Gemini):*
+/natural \<message\> — describe a workflow in plain English
+
+*Quick Templates (no AI needed):*
+/templates — see all preset templates
+/dep\-temp \<N\> \<params\> — deploy a template directly
+
+*Workflow Management:*
 /list — see your active workflows
 /pause — pause a workflow
 /resume — resume a workflow
 /delete — delete a workflow
-/status — see recent executions`;
+/status — see recent executions
+/cancel — cancel current action`;
   },
 
   clarify(question: string): string {
@@ -107,10 +116,11 @@ Send me a message to create your first one!`;
         const dir = p.direction === "above" ? "rises above" : "drops below";
         const price =
           p.threshold != null ? `$${p.threshold.toLocaleString()}` : "?";
+        const checkEvery = p.schedule ?? "every 10 minutes";
         return (
           `Here's what I'll set up:\n\n` +
           `📋 *${token.toUpperCase()} Price Alert*\n` +
-          `- Monitors ${token.toUpperCase()} price every minute\n` +
+          `- Monitors ${token.toUpperCase()} price ${checkEvery}\n` +
           `- Triggers when price ${dir} ${price}\n` +
           `- Sends you a Telegram notification` +
           FOOTER
@@ -251,6 +261,53 @@ Send me a message to create your first one!`;
       return `${icon} ${ts} UTC — ${e.status}`;
     });
     return `📊 *${name}*\n\nLast ${executions.length} executions:\n\n${rows.join("\n")}`;
+  },
+
+  // ─── Stage 5: Templates ─────────────────────────────────────────────────────
+
+  templateList(): string {
+    const items = TEMPLATES.map((t) => {
+      const usage = t.params
+        .map((p) => (p.optional ? `[${p.example}]` : `<${p.example}>`))
+        .join(" ");
+      return (
+        `${t.emoji} *${t.id}\\. ${t.name}*\n` +
+        `${t.description}\n` +
+        `\`/dep-temp ${t.id} ${usage}\``
+      );
+    }).join("\n\n");
+
+    return (
+      `*Workflow Templates*\n\n` +
+      `Deploy a workflow instantly — no AI required\\.\n\n` +
+      `${items}\n\n` +
+      `_Optional params shown in \\[brackets\\]\\._`
+    );
+  },
+
+  templateUsage(templateId: number): string {
+    const t = TEMPLATES.find((x) => x.id === templateId);
+    if (!t) return `Template #${templateId} not found\\. Send /templates to see all\\.`;
+    const usage = t.params
+      .map((p) => (p.optional ? `[${p.example}]` : `<${p.example}>`))
+      .join(" ");
+    const paramList = t.params
+      .map((p, i) => `  ${i + 1}\\. *${p.label}*${p.optional ? " _(optional)_" : ""} — e\\.g\\. \`${p.example}\``)
+      .join("\n");
+    return (
+      `${t.emoji} *${t.name}*\n${t.description}\n\n` +
+      `Usage:\n\`/dep-temp ${t.id} ${usage}\`\n\n` +
+      `Parameters:\n${paramList}`
+    );
+  },
+
+  naturalHelp(): string {
+    return (
+      `🤖 *AI Mode* — describe your workflow in plain English:\n\n` +
+      `Example:\n` +
+      `\`/natural Alert me when ETH drops below $2000\`\n\n` +
+      `Or type your message directly \\(no command needed\\)\\.`
+    );
   },
 };
 

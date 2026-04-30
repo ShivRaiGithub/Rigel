@@ -261,7 +261,7 @@ export async function handleMessage(
     return;
   }
 
-  // ── CLARIFYING ─────────────────────────────────────────────────────────────
+  // ── CLARIFYING ───────────────────────────────────────────────────────
   if (session.state === "CLARIFYING") {
     const attempts = session.clarifyingAttempts + 1;
     const updatedHistory = [
@@ -283,8 +283,37 @@ export async function handleMessage(
     console.log(
       `[clarify] Attempt ${attempts} for user ${userId}: "${messageText}"`
     );
-    const intent = await parseIntent(messageText, updatedHistory);
+
+    let intent: import("../workflows/types").ParsedIntent;
+    try {
+      // Pass the CURRENT intent so Gemini merges edits rather than re-parsing
+      intent = await parseIntent(messageText, updatedHistory, session.currentIntent ?? undefined);
+    } catch (err: unknown) {
+      const isRateLimit = err instanceof Error && err.name === "RATE_LIMITED";
+      if (isRateLimit) {
+        // Stay in CLARIFYING — don't lose progress
+        await ctx.reply(
+          "⏳ Gemini is temporarily rate-limited. Please wait a moment and try again."
+        );
+      } else {
+        await ctx.reply("Something went wrong understanding your request. Please try again.");
+      }
+      return;
+    }
+
     console.log("Re-parsed intent:", JSON.stringify(intent, null, 2));
+
+    // Guard: if Gemini returned unknown after an edit, keep previous intent
+    if (
+      (intent.workflowType === "unknown" || intent.confidence < 0.4) &&
+      session.currentIntent
+    ) {
+      await ctx.reply(
+        "I couldn't understand that change. Could you rephrase it?\n\n" +
+        "Example: \"change the schedule to every hour\" or \"set threshold to 1500\""
+      );
+      return;
+    }
 
     if (intent.missingRequired.length > 0) {
       updateSession(userId, { currentIntent: intent });
@@ -296,7 +325,7 @@ export async function handleMessage(
       return;
     }
 
-    // All params now collected → move to CONFIRMING
+    // All params collected → move to CONFIRMING
     updateSession(userId, {
       currentIntent: intent,
       state: "CONFIRMING",
@@ -307,7 +336,7 @@ export async function handleMessage(
     return;
   }
 
-  // ── IDLE / PARSING (default) ───────────────────────────────────────────────
+  // ── IDLE / PARSING (default) ───────────────────────────────────────────────────
   const updatedHistory = [
     ...session.conversationHistory,
     `User: ${messageText}`,
@@ -319,7 +348,23 @@ export async function handleMessage(
   });
 
   console.log(`\n[parse] User ${userId}: "${messageText}"`);
-  const intent = await parseIntent(messageText, updatedHistory);
+
+  let intent: import("../workflows/types").ParsedIntent;
+  try {
+    intent = await parseIntent(messageText, updatedHistory);
+  } catch (err: unknown) {
+    updateSession(userId, { state: "IDLE" });
+    const isRateLimit = err instanceof Error && err.name === "RATE_LIMITED";
+    if (isRateLimit) {
+      await ctx.reply(
+        "⏳ Gemini is temporarily rate-limited. Please wait a moment and send your message again."
+      );
+    } else {
+      await ctx.reply("Something went wrong. Please try again.");
+    }
+    return;
+  }
+
   console.log("Parsed intent:", JSON.stringify(intent, null, 2));
 
   // Unknown or low-confidence intent

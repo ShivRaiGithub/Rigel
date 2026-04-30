@@ -3,6 +3,11 @@ import { Bot, GrammyError, HttpError } from "grammy";
 import { Messages } from "./messages";
 import { handleMessage } from "./conversations";
 import { getSession, updateSession, resetSession } from "../store/userStore";
+import { parseDepTempCommand } from "../templates";
+import { buildWorkflow, workflowMeta } from "../workflows/builder";
+import { createWorkflow } from "../keeperhub/client";
+import { DeployedWorkflow } from "../workflows/types";
+import { addWorkflow } from "../store/userStore";
 
 // ─── Validate env ─────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -25,7 +30,7 @@ bot.command("start", async (ctx) => {
 // ─── /help ────────────────────────────────────────────────────────────────────
 bot.command("help", async (ctx) => {
   try {
-    await ctx.reply(Messages.help(), { parse_mode: "Markdown" });
+    await ctx.reply(Messages.help(), { parse_mode: "MarkdownV2" });
   } catch (err) {
     console.error("[/help] Error:", err);
   }
@@ -126,6 +131,135 @@ bot.command("status", async (ctx) => {
     );
   } catch (err) {
     console.error("[/status] Error:", err);
+  }
+});
+
+// ─── /templates ───────────────────────────────────────────────────────────────
+bot.command("templates", async (ctx) => {
+  try {
+    await ctx.reply(Messages.templateList(), { parse_mode: "MarkdownV2" });
+  } catch (err) {
+    console.error("[/templates] Error:", err);
+  }
+});
+
+// ─── /dep-temp ────────────────────────────────────────────────────────────────
+// Usage: /dep-temp <templateId> <arg1> <arg2> ...
+// Bypasses Gemini entirely — builds intent from template, then deploys.
+bot.command("dep_temp", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const raw = ctx.message?.text?.replace(/^\/dep[_-]temp\s*/i, "").trim() ?? "";
+
+    if (!raw) {
+      await ctx.reply(Messages.templateList(), { parse_mode: "MarkdownV2" });
+      return;
+    }
+
+    const parsed = parseDepTempCommand(raw);
+
+    if ("error" in parsed) {
+      await ctx.reply(parsed.error, { parse_mode: "Markdown" });
+      return;
+    }
+
+    const { template, intent } = parsed;
+    const { name, description } = workflowMeta(intent);
+
+    await ctx.reply(`⟳ Deploying *${name}* from template ${template.emoji}…`, {
+      parse_mode: "Markdown",
+    });
+
+    let graph;
+    try {
+      graph = buildWorkflow(intent);
+    } catch (buildErr) {
+      const msg = buildErr instanceof Error ? buildErr.message : String(buildErr);
+      await ctx.reply(`❌ Failed to build workflow: ${msg}`);
+      return;
+    }
+
+    const result = await createWorkflow(name, description, graph);
+
+    if (!result.success || !result.workflowId || !result.workflowUrl) {
+      await ctx.reply(
+        `❌ KeeperHub deployment failed: ${result.error ?? "unknown error"}`
+      );
+      return;
+    }
+
+    const deployed: DeployedWorkflow = {
+      id: result.workflowId,
+      name,
+      type: intent.workflowType,
+      url: result.workflowUrl,
+      createdAt: Date.now(),
+      paused: false,
+    };
+    addWorkflow(userId, deployed);
+
+    console.log(`[dep-temp] Deployed "${name}" (${result.workflowId}) for user ${userId}`);
+    await ctx.reply(Messages.deploySuccess(name, result.workflowUrl), {
+      parse_mode: "Markdown",
+    });
+  } catch (err) {
+    console.error("[/dep-temp] Error:", err);
+    await ctx.reply("Something went wrong. Please try again.");
+  }
+});
+
+// Grammy also registers the hyphen variant
+bot.command("dep-temp", async (ctx) => {
+  // Grammy normalises hyphens to underscores, but add alias just in case
+  const userId = ctx.from?.id;
+  if (!userId) return;
+  const raw = ctx.message?.text?.replace(/^\/dep[_-]temp\s*/i, "").trim() ?? "";
+  if (!raw) {
+    await ctx.reply(Messages.templateList(), { parse_mode: "MarkdownV2" });
+    return;
+  }
+  const parsed = parseDepTempCommand(raw);
+  if ("error" in parsed) {
+    await ctx.reply(parsed.error, { parse_mode: "Markdown" });
+    return;
+  }
+  const { template, intent } = parsed;
+  const { name, description } = workflowMeta(intent);
+  await ctx.reply(`⟳ Deploying *${name}* from template ${template.emoji}…`, { parse_mode: "Markdown" });
+  let graph;
+  try { graph = buildWorkflow(intent); } catch (e) {
+    await ctx.reply(`❌ Build error: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
+  const result = await createWorkflow(name, description, graph);
+  if (!result.success || !result.workflowId || !result.workflowUrl) {
+    await ctx.reply(`❌ Deployment failed: ${result.error ?? "unknown"}`);
+    return;
+  }
+  addWorkflow(userId, { id: result.workflowId, name, type: intent.workflowType, url: result.workflowUrl, createdAt: Date.now(), paused: false });
+  await ctx.reply(Messages.deploySuccess(name, result.workflowUrl), { parse_mode: "Markdown" });
+});
+
+// ─── /natural ─────────────────────────────────────────────────────────────────
+// /natural <message> — explicit AI-mode entry point
+bot.command("natural", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const text = ctx.message?.text?.replace(/^\/natural\s*/i, "").trim() ?? "";
+
+    if (!text) {
+      await ctx.reply(Messages.naturalHelp(), { parse_mode: "MarkdownV2" });
+      return;
+    }
+
+    await handleMessage(ctx, userId, text);
+  } catch (err) {
+    console.error("[/natural] Error:", err);
+    await ctx.reply("Something went wrong. Please try again.");
   }
 });
 

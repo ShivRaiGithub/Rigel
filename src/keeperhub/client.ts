@@ -38,7 +38,16 @@ interface KHErrorResponse {
 
 // ─── Config ───────────────────────────────────────────────────────────────────
 
-const BASE_URL = "https://keeperhub.com/api";
+/**
+ * Base URL for all KeeperHub REST calls.
+ * Override via KEEPERHUB_BASE_URL if your org uses a different host
+ * (e.g. https://app.keeperhub.com/api).
+ */
+const BASE_URL =
+  (process.env.KEEPERHUB_BASE_URL ?? "https://keeperhub.com/api").replace(
+    /\/$/,
+    ""
+  );
 
 function getHeaders(): Record<string, string> {
   const apiKey = process.env.KEEPERHUB_API_KEY;

@@ -1,7 +1,21 @@
+import { ParsedIntent } from "../workflows/types";
+
 export function buildIntentPrompt(
   userMessage: string,
-  conversationHistory: string
+  conversationHistory: string,
+  currentIntent?: ParsedIntent
 ): string {
+  const editContext = currentIntent
+    ? `
+CURRENT WORKFLOW CONFIGURATION (already parsed — the user wants to EDIT it):
+${JSON.stringify(currentIntent, null, 2)}
+
+The user's message is a modification request. Update ONLY the fields they mention.
+Keep all other parameter values exactly as they are in the current configuration.
+Do NOT change workflowType unless the user explicitly asks for a completely different type.
+`
+    : "";
+
   return `You are an intent parser for a Telegram bot that creates KeeperHub \
 onchain automation workflows.
 
@@ -16,7 +30,14 @@ SUPPORTED WORKFLOW TYPES:
 
 SUPPORTED CHAINS: ethereum, base, arbitrum, polygon
 SUPPORTED PROTOCOLS: aave, compound, morpho
-
+SCHEDULE EXAMPLES (map natural language to cron-style strings):
+- "every 5 minutes" → "*/5 * * * *"
+- "every 10 minutes" → "every 10 minutes"
+- "every hour" / "hourly" → "every hour"
+- "every 6 hours" → "every 6 hours"
+- "daily" / "once a day" → "daily"
+- "every Sunday" / "weekly" → "weekly"
+${editContext}
 REQUIRED PARAMETERS PER TYPE:
 - wallet_monitor: walletAddress, token, threshold, direction, chain
 - defi_health: walletAddress, protocol, metric, threshold, chain

@@ -34,11 +34,11 @@ What would you like to automate?`;
 "Alert me when my USDC on Base drops below 500"
 
 *AI Mode (Gemini):*
-/natural \<message\> — describe a workflow in plain English
+/natural <message> — describe a workflow in plain English
 
 *Quick Templates (no AI needed):*
 /templates — see all preset templates
-/dep\-temp \<N\> \<params\> — deploy a template directly
+/dep-temp <N> <params> — deploy a template directly
 
 *Workflow Management:*
 /list — see your active workflows
@@ -271,7 +271,7 @@ Send me a message to create your first one!`;
         .map((p) => (p.optional ? `[${p.example}]` : `<${p.example}>`))
         .join(" ");
       return (
-        `${t.emoji} *${t.id}\\. ${t.name}*\n` +
+        `${t.emoji} *${t.id}. ${t.name}*\n` +
         `${t.description}\n` +
         `\`/dep-temp ${t.id} ${usage}\``
       );
@@ -279,20 +279,20 @@ Send me a message to create your first one!`;
 
     return (
       `*Workflow Templates*\n\n` +
-      `Deploy a workflow instantly — no AI required\\.\n\n` +
+      `Deploy a workflow instantly — no AI required.\n\n` +
       `${items}\n\n` +
-      `_Optional params shown in \\[brackets\\]\\._`
+      `_Optional params shown in [brackets]._`
     );
   },
 
   templateUsage(templateId: number): string {
     const t = TEMPLATES.find((x) => x.id === templateId);
-    if (!t) return `Template #${templateId} not found\\. Send /templates to see all\\.`;
+    if (!t) return `Template #${templateId} not found. Send /templates to see all.`;
     const usage = t.params
       .map((p) => (p.optional ? `[${p.example}]` : `<${p.example}>`))
       .join(" ");
     const paramList = t.params
-      .map((p, i) => `  ${i + 1}\\. *${p.label}*${p.optional ? " _(optional)_" : ""} — e\\.g\\. \`${p.example}\``)
+      .map((p, i) => `  ${i + 1}. *${p.label}*${p.optional ? " _(optional)_" : ""} — e.g. \`${p.example}\``)
       .join("\n");
     return (
       `${t.emoji} *${t.name}*\n${t.description}\n\n` +
@@ -306,7 +306,7 @@ Send me a message to create your first one!`;
       `🤖 *AI Mode* — describe your workflow in plain English:\n\n` +
       `Example:\n` +
       `\`/natural Alert me when ETH drops below $2000\`\n\n` +
-      `Or type your message directly \\(no command needed\\)\\.`
+      `Or type your message directly (no command needed).`
     );
   },
 };

@@ -30,7 +30,7 @@ bot.command("start", async (ctx) => {
 // ─── /help ────────────────────────────────────────────────────────────────────
 bot.command("help", async (ctx) => {
   try {
-    await ctx.reply(Messages.help(), { parse_mode: "MarkdownV2" });
+    await ctx.reply(Messages.help(), { parse_mode: "Markdown" });
   } catch (err) {
     console.error("[/help] Error:", err);
   }
@@ -137,7 +137,7 @@ bot.command("status", async (ctx) => {
 // ─── /templates ───────────────────────────────────────────────────────────────
 bot.command("templates", async (ctx) => {
   try {
-    await ctx.reply(Messages.templateList(), { parse_mode: "MarkdownV2" });
+    await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
   } catch (err) {
     console.error("[/templates] Error:", err);
   }
@@ -154,7 +154,7 @@ bot.command("dep_temp", async (ctx) => {
     const raw = ctx.message?.text?.replace(/^\/dep[_-]temp\s*/i, "").trim() ?? "";
 
     if (!raw) {
-      await ctx.reply(Messages.templateList(), { parse_mode: "MarkdownV2" });
+      await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
       return;
     }
 
@@ -217,7 +217,7 @@ bot.command("dep-temp", async (ctx) => {
   if (!userId) return;
   const raw = ctx.message?.text?.replace(/^\/dep[_-]temp\s*/i, "").trim() ?? "";
   if (!raw) {
-    await ctx.reply(Messages.templateList(), { parse_mode: "MarkdownV2" });
+    await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
     return;
   }
   const parsed = parseDepTempCommand(raw);
@@ -252,7 +252,7 @@ bot.command("natural", async (ctx) => {
     const text = ctx.message?.text?.replace(/^\/natural\s*/i, "").trim() ?? "";
 
     if (!text) {
-      await ctx.reply(Messages.naturalHelp(), { parse_mode: "MarkdownV2" });
+      await ctx.reply(Messages.naturalHelp(), { parse_mode: "Markdown" });
       return;
     }
 

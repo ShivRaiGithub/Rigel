@@ -40,7 +40,14 @@ export type ConversationState =
   | "PARSING"
   | "CLARIFYING"
   | "CONFIRMING"
-  | "DEPLOYING";
+  | "DEPLOYING"
+  | "SELECTING_PAUSE"
+  | "SELECTING_RESUME"
+  | "SELECTING_DELETE"
+  | "SELECTING_STATUS"
+  | "CONFIRMING_DELETE";
+
+export type PendingAction = "pause" | "resume" | "delete" | "status" | null;
 
 // Per-user session stored in memory
 export interface UserSession {
@@ -50,6 +57,9 @@ export interface UserSession {
   conversationHistory: string[];
   clarifyingAttempts: number;
   deployedWorkflows: DeployedWorkflow[];
+  // Stage 4: management flow
+  pendingAction: PendingAction;
+  pendingDeleteWorkflow: DeployedWorkflow | null;
 }
 
 // A workflow that has been deployed to KeeperHub

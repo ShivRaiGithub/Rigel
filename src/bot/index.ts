@@ -2,7 +2,7 @@ import "dotenv/config";
 import { Bot, GrammyError, HttpError } from "grammy";
 import { Messages } from "./messages";
 import { handleMessage } from "./conversations";
-import { getSession } from "../store/userStore";
+import { getSession, updateSession, resetSession } from "../store/userStore";
 
 // ─── Validate env ─────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -36,15 +36,108 @@ bot.command("list", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-
     const session = getSession(userId);
     if (session.deployedWorkflows.length === 0) {
       await ctx.reply(Messages.noWorkflows());
     } else {
-      await ctx.reply(Messages.workflowList(session.deployedWorkflows));
+      await ctx.reply(Messages.workflowList(session.deployedWorkflows), {
+        parse_mode: "Markdown",
+      });
     }
   } catch (err) {
     console.error("[/list] Error:", err);
+  }
+});
+
+// ─── /pause ───────────────────────────────────────────────────────────────────
+bot.command("pause", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const session = getSession(userId);
+    const active = session.deployedWorkflows.filter((w) => !w.paused);
+    if (active.length === 0) {
+      await ctx.reply("No active workflows to pause.");
+      return;
+    }
+    updateSession(userId, { state: "SELECTING_PAUSE", pendingAction: "pause" });
+    await ctx.reply(Messages.selectWorkflow(active, "pause"), {
+      parse_mode: "Markdown",
+    });
+  } catch (err) {
+    console.error("[/pause] Error:", err);
+  }
+});
+
+// ─── /resume ──────────────────────────────────────────────────────────────────
+bot.command("resume", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const session = getSession(userId);
+    const paused = session.deployedWorkflows.filter((w) => w.paused);
+    if (paused.length === 0) {
+      await ctx.reply("No paused workflows to resume.");
+      return;
+    }
+    updateSession(userId, { state: "SELECTING_RESUME", pendingAction: "resume" });
+    await ctx.reply(Messages.selectWorkflow(paused, "resume"), {
+      parse_mode: "Markdown",
+    });
+  } catch (err) {
+    console.error("[/resume] Error:", err);
+  }
+});
+
+// ─── /delete ──────────────────────────────────────────────────────────────────
+bot.command("delete", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const session = getSession(userId);
+    if (session.deployedWorkflows.length === 0) {
+      await ctx.reply(Messages.noWorkflows());
+      return;
+    }
+    updateSession(userId, { state: "SELECTING_DELETE", pendingAction: "delete" });
+    await ctx.reply(
+      Messages.selectWorkflow(session.deployedWorkflows, "delete"),
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    console.error("[/delete] Error:", err);
+  }
+});
+
+// ─── /status ──────────────────────────────────────────────────────────────────
+bot.command("status", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const session = getSession(userId);
+    if (session.deployedWorkflows.length === 0) {
+      await ctx.reply(Messages.noWorkflows());
+      return;
+    }
+    updateSession(userId, { state: "SELECTING_STATUS", pendingAction: "status" });
+    await ctx.reply(
+      Messages.selectWorkflow(session.deployedWorkflows, "check status of"),
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    console.error("[/status] Error:", err);
+  }
+});
+
+// ─── /cancel ──────────────────────────────────────────────────────────────────
+bot.command("cancel", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    resetSession(userId);
+    await ctx.reply("Cancelled.");
+  } catch (err) {
+    console.error("[/cancel] Error:", err);
   }
 });
 

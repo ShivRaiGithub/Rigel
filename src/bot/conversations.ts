@@ -6,10 +6,18 @@ import {
   updateSession,
   resetSession,
   addWorkflow,
+  removeWorkflow,
+  updateWorkflowPaused,
 } from "../store/userStore";
 import { DeployedWorkflow, ParsedIntent } from "../workflows/types";
 import { MAX_CLARIFYING_ATTEMPTS } from "../constants";
-import { createWorkflow } from "../keeperhub/client";
+import {
+  createWorkflow,
+  pauseWorkflow,
+  resumeWorkflow,
+  deleteWorkflow,
+  getExecutionHistory,
+} from "../keeperhub/client";
 import { buildWorkflow, workflowMeta } from "../workflows/builder";
 
 // workflowName is now handled by workflowMeta() in the builder module
@@ -67,9 +75,26 @@ async function deployWorkflow(ctx: Context, userId: number): Promise<void> {
 
 // ─── Core state machine ───────────────────────────────────────────────────────
 
+/** Shared helper: parse a 1-based numeric choice from user text. */
+function parseSelection(text: string): number | null {
+  const n = parseInt(text.trim(), 10);
+  return isNaN(n) ? null : n;
+}
+
+/** Reset to IDLE and clear Stage 4 management fields. */
+function clearManagementState(userId: number): void {
+  updateSession(userId, {
+    state: "IDLE",
+    pendingAction: null,
+    pendingDeleteWorkflow: null,
+  });
+}
+
 /**
  * Routes an incoming text message through the conversation state machine.
  * States: IDLE → PARSING → CLARIFYING → CONFIRMING → DEPLOYING
+ *         SELECTING_PAUSE / SELECTING_RESUME / SELECTING_DELETE / SELECTING_STATUS
+ *         CONFIRMING_DELETE
  */
 export async function handleMessage(
   ctx: Context,
@@ -81,6 +106,123 @@ export async function handleMessage(
   // ── DEPLOYING ──────────────────────────────────────────────────────────────
   if (session.state === "DEPLOYING") {
     await ctx.reply("⏳ Working on it, please wait...");
+    return;
+  }
+
+  // ── CONFIRMING_DELETE ──────────────────────────────────────────────────────
+  if (session.state === "CONFIRMING_DELETE") {
+    const resp = messageText.toLowerCase().trim();
+    const wf = session.pendingDeleteWorkflow;
+
+    if (!wf) {
+      clearManagementState(userId);
+      await ctx.reply("Something went wrong. Please try /delete again.");
+      return;
+    }
+
+    if (resp === "yes") {
+      const result = await deleteWorkflow(wf.id);
+      clearManagementState(userId);
+      if (result.success) {
+        removeWorkflow(userId, wf.id);
+        await ctx.reply(Messages.deleteSuccess(wf.name), { parse_mode: "Markdown" });
+      } else {
+        await ctx.reply(`⚠️ Could not delete. Try again.\n\nError: ${result.error ?? "unknown"}`);
+      }
+    } else {
+      clearManagementState(userId);
+      await ctx.reply("Cancelled deletion.");
+    }
+    return;
+  }
+
+  // ── SELECTING_PAUSE ────────────────────────────────────────────────────────
+  if (session.state === "SELECTING_PAUSE") {
+    const activeWfs = session.deployedWorkflows.filter((w) => !w.paused);
+    const choice = parseSelection(messageText);
+    if (choice === null) {
+      await ctx.reply("Please reply with a number from the list, or /cancel");
+      return;
+    }
+    if (choice < 1 || choice > activeWfs.length) {
+      await ctx.reply(`Please pick a number between 1 and ${activeWfs.length}`);
+      return;
+    }
+    const wf = activeWfs[choice - 1];
+    const result = await pauseWorkflow(wf.id);
+    clearManagementState(userId);
+    if (result.success) {
+      updateWorkflowPaused(userId, wf.id, true);
+      await ctx.reply(Messages.pauseSuccess(wf.name), { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply(`⚠️ Could not pause workflow. Try again.\n\nError: ${result.error ?? "unknown"}`);
+    }
+    return;
+  }
+
+  // ── SELECTING_RESUME ───────────────────────────────────────────────────────
+  if (session.state === "SELECTING_RESUME") {
+    const pausedWfs = session.deployedWorkflows.filter((w) => w.paused);
+    const choice = parseSelection(messageText);
+    if (choice === null) {
+      await ctx.reply("Please reply with a number from the list, or /cancel");
+      return;
+    }
+    if (choice < 1 || choice > pausedWfs.length) {
+      await ctx.reply(`Please pick a number between 1 and ${pausedWfs.length}`);
+      return;
+    }
+    const wf = pausedWfs[choice - 1];
+    const result = await resumeWorkflow(wf.id);
+    clearManagementState(userId);
+    if (result.success) {
+      updateWorkflowPaused(userId, wf.id, false);
+      await ctx.reply(Messages.resumeSuccess(wf.name), { parse_mode: "Markdown" });
+    } else {
+      await ctx.reply(`⚠️ Could not resume workflow. Try again.\n\nError: ${result.error ?? "unknown"}`);
+    }
+    return;
+  }
+
+  // ── SELECTING_DELETE ───────────────────────────────────────────────────────
+  if (session.state === "SELECTING_DELETE") {
+    const allWfs = session.deployedWorkflows;
+    const choice = parseSelection(messageText);
+    if (choice === null) {
+      await ctx.reply("Please reply with a number from the list, or /cancel");
+      return;
+    }
+    if (choice < 1 || choice > allWfs.length) {
+      await ctx.reply(`Please pick a number between 1 and ${allWfs.length}`);
+      return;
+    }
+    const wf = allWfs[choice - 1];
+    updateSession(userId, {
+      state: "CONFIRMING_DELETE",
+      pendingDeleteWorkflow: wf,
+    });
+    await ctx.reply(Messages.deleteConfirm(wf.name), { parse_mode: "Markdown" });
+    return;
+  }
+
+  // ── SELECTING_STATUS ───────────────────────────────────────────────────────
+  if (session.state === "SELECTING_STATUS") {
+    const allWfs = session.deployedWorkflows;
+    const choice = parseSelection(messageText);
+    if (choice === null) {
+      await ctx.reply("Please reply with a number from the list, or /cancel");
+      return;
+    }
+    if (choice < 1 || choice > allWfs.length) {
+      await ctx.reply(`Please pick a number between 1 and ${allWfs.length}`);
+      return;
+    }
+    const wf = allWfs[choice - 1];
+    const executions = await getExecutionHistory(wf.id, 5);
+    clearManagementState(userId);
+    await ctx.reply(Messages.statusMessage(wf.name, executions), {
+      parse_mode: "Markdown",
+    });
     return;
   }
 

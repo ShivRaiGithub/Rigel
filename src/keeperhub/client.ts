@@ -166,3 +166,98 @@ export async function listWorkflows(): Promise<
 
   return res.json() as Promise<Array<{ id: string; name: string; description: string }>>;
 }
+
+/**
+ * Pause a workflow (sets it to non-executing).
+ * KeeperHub uses PATCH /api/workflows/{id} with a paused flag.
+ */
+export async function pauseWorkflow(workflowId: string): Promise<DeployResult> {
+  try {
+    await khPatch(`/workflows/${workflowId}`, { paused: true });
+    return { success: true, workflowId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[KeeperHub] pauseWorkflow failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Resume a paused workflow.
+ */
+export async function resumeWorkflow(workflowId: string): Promise<DeployResult> {
+  try {
+    await khPatch(`/workflows/${workflowId}`, { paused: false });
+    return { success: true, workflowId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[KeeperHub] resumeWorkflow failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+/**
+ * Delete a workflow from KeeperHub.
+ * Uses force=true to cascade-delete any execution history.
+ */
+export async function deleteWorkflow(workflowId: string): Promise<DeployResult> {
+  try {
+    const res = await fetch(`${BASE_URL}/workflows/${workflowId}?force=true`, {
+      method: "DELETE",
+      headers: getHeaders(),
+    });
+
+    if (!res.ok) {
+      let errMsg = `HTTP ${res.status}`;
+      try {
+        const errBody = (await res.json()) as KHErrorResponse;
+        errMsg += `: ${errBody.error ?? errBody.message ?? res.statusText}`;
+      } catch {
+        errMsg += `: ${res.statusText}`;
+      }
+      throw new Error(`KeeperHub DELETE /workflows/${workflowId} failed — ${errMsg}`);
+    }
+
+    return { success: true, workflowId };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[KeeperHub] deleteWorkflow failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+// ─── Execution history ────────────────────────────────────────────────────────
+
+export interface Execution {
+  id: string;
+  status: "success" | "failed" | "running" | "pending";
+  startedAt: string;
+  finishedAt?: string;
+}
+
+/**
+ * Fetch the most recent N executions for a workflow.
+ * KeeperHub exposes these under GET /api/workflows/{id}/executions.
+ */
+export async function getExecutionHistory(
+  workflowId: string,
+  limit: number = 5
+): Promise<Execution[]> {
+  try {
+    const res = await fetch(
+      `${BASE_URL}/workflows/${workflowId}/executions?limit=${limit}`,
+      { method: "GET", headers: getHeaders() }
+    );
+
+    if (!res.ok) {
+      console.warn(`[KeeperHub] getExecutionHistory HTTP ${res.status} — returning empty`);
+      return [];
+    }
+
+    const data = (await res.json()) as Execution[];
+    return Array.isArray(data) ? data.slice(0, limit) : [];
+  } catch (err) {
+    console.error(`[KeeperHub] getExecutionHistory error:`, err);
+    return [];
+  }
+}

@@ -191,6 +191,67 @@ Send me a message to create your first one!`;
         );
     }
   },
+
+  // ─── Stage 4: Workflow management ───────────────────────────────────────────
+
+  selectWorkflow(workflows: DeployedWorkflow[], action: string): string {
+    const items = workflows
+      .map(
+        (w, i) =>
+          `${i + 1}. ${w.paused ? "⏸" : "⚡"} *${w.name}*\n   ${w.url}`
+      )
+      .join("\n\n");
+    return (
+      `Which workflow would you like to ${action}?\n\n` +
+      `${items}\n\n` +
+      `Reply with a number (1–${workflows.length}) or /cancel to go back`
+    );
+  },
+
+  pauseSuccess(name: string): string {
+    return `⏸ Paused: *${name}*\n\nSend /resume to re-activate it.`;
+  },
+
+  resumeSuccess(name: string): string {
+    return `▶️ Resumed: *${name}*\n\nIt's now actively monitoring.`;
+  },
+
+  deleteConfirm(name: string): string {
+    return (
+      `⚠️ Are you sure you want to delete *${name}*?\n\n` +
+      `This cannot be undone.\n\n` +
+      `Reply *yes* to confirm or /cancel to go back`
+    );
+  },
+
+  deleteSuccess(name: string): string {
+    return `🗑 Deleted: *${name}*`;
+  },
+
+  statusMessage(name: string, executions: import("../keeperhub/client").Execution[]): string {
+    if (executions.length === 0) {
+      return `📊 *${name}*\n\nNo executions yet — the workflow hasn't run.`;
+    }
+    const rows = executions.map((e) => {
+      const icon =
+        e.status === "success"
+          ? "✅"
+          : e.status === "failed"
+          ? "❌"
+          : e.status === "running"
+          ? "⟳"
+          : "⏳";
+      const ts = new Date(e.startedAt).toLocaleString("en-GB", {
+        day: "2-digit",
+        month: "short",
+        hour: "2-digit",
+        minute: "2-digit",
+        timeZone: "UTC",
+      });
+      return `${icon} ${ts} UTC — ${e.status}`;
+    });
+    return `📊 *${name}*\n\nLast ${executions.length} executions:\n\n${rows.join("\n")}`;
+  },
 };
 
 /** Truncates a wallet address to "0x1234...abcd" format. */

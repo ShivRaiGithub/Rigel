@@ -14,6 +14,8 @@ function createDefaultSession(userId: number): UserSession {
     conversationHistory: [],
     clarifyingAttempts: 0,
     deployedWorkflows: [],
+    pendingAction: null,
+    pendingDeleteWorkflow: null,
   };
 }
 
@@ -71,6 +73,22 @@ export function removeWorkflow(userId: number, workflowId: string): void {
   updateSession(userId, {
     deployedWorkflows: session.deployedWorkflows.filter(
       (w) => w.id !== workflowId
+    ),
+  });
+}
+
+/**
+ * Updates the paused flag for a single workflow in the user's list.
+ */
+export function updateWorkflowPaused(
+  userId: number,
+  workflowId: string,
+  paused: boolean
+): void {
+  const session = getSession(userId);
+  updateSession(userId, {
+    deployedWorkflows: session.deployedWorkflows.map((w) =>
+      w.id === workflowId ? { ...w, paused } : w
     ),
   });
 }

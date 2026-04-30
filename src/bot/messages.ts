@@ -2,7 +2,7 @@ import { DeployedWorkflow } from "../workflows/types";
 
 export const Messages = {
   welcome(): string {
-    return `👋 Welcome to Rigel — powered by FlowBot!
+    return `👋 Welcome to Rigel!
 
 I turn plain English into live KeeperHub onchain automations.
 

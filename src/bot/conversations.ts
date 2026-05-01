@@ -36,7 +36,7 @@ async function deployWorkflow(ctx: Context, userId: number): Promise<void> {
 
   let graph;
   try {
-    graph = buildWorkflow(intent);
+    graph = buildWorkflow(intent, String(ctx.chat?.id ?? userId));
   } catch (buildErr) {
     const msg = buildErr instanceof Error ? buildErr.message : String(buildErr);
     resetSession(userId);

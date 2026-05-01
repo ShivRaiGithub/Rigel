@@ -1,11 +1,19 @@
-import { ParsedIntent, ExtractedParams, WorkflowType, Chain, Protocol, Direction, Metric } from "../workflows/types";
+import {
+  ParsedIntent,
+  ExtractedParams,
+  WorkflowType,
+  Chain,
+  Protocol,
+  Direction,
+  Metric,
+} from "../workflows/types";
 
 // ─── Template definition ──────────────────────────────────────────────────────
 
 export interface TemplateParam {
-  name: string;       // internal key
-  label: string;      // display label shown in /templates
-  example: string;    // used in usage string
+  name: string;
+  label: string;
+  example: string;
   optional?: boolean;
 }
 
@@ -16,11 +24,10 @@ export interface WorkflowTemplate {
   description: string;
   emoji: string;
   params: TemplateParam[];
-  /** Build a fully-populated ParsedIntent from the ordered CLI args */
   build: (args: string[]) => ParsedIntent;
 }
 
-// ─── Empty parameter baseline ─────────────────────────────────────────────────
+// ─── Helpers ──────────────────────────────────────────────────────────────────
 
 function base(): ExtractedParams {
   return {
@@ -36,60 +43,96 @@ function base(): ExtractedParams {
   };
 }
 
+const VALID_DIRECTIONS: Direction[] = ["above", "below", "incoming", "outgoing"];
+const VALID_CHAINS: Chain[] = ["ethereum", "base", "arbitrum", "polygon"];
+const VALID_PROTOCOLS: Protocol[] = ["aave", "compound", "morpho"];
+
+function toDirection(s: string | undefined, fallback: Direction): Direction {
+  return VALID_DIRECTIONS.includes(s as Direction)
+    ? (s as Direction)
+    : fallback;
+}
+
+function toChain(s: string | undefined, fallback: Chain): Chain {
+  return VALID_CHAINS.includes(s as Chain) ? (s as Chain) : fallback;
+}
+
+function toProtocol(s: string | undefined, fallback: Protocol): Protocol {
+  return VALID_PROTOCOLS.includes(s as Protocol) ? (s as Protocol) : fallback;
+}
+
 // ─── Template catalogue ───────────────────────────────────────────────────────
 
 export const TEMPLATES: WorkflowTemplate[] = [
+
   // ─── 1. Token Price Alert ─────────────────────────────────────────────────
   {
     id: 1,
     workflowType: "price_alert",
     name: "Token Price Alert",
     emoji: "📈",
-    description: "Alert when a token price crosses a threshold.",
+    description: "Get a Telegram alert when a token price crosses a threshold.",
     params: [
       { name: "token",     label: "Token symbol",    example: "ETH" },
-      { name: "threshold", label: "Price threshold", example: "2000" },
+      { name: "threshold", label: "Price (USD)",      example: "2000" },
       { name: "direction", label: "above / below",   example: "below" },
-      { name: "schedule",  label: "Check interval",  example: "every hour", optional: true },
     ],
-    build([token, thresholdStr, direction, schedule]: string[]): ParsedIntent {
+    build([token, thresholdStr, direction]: string[]): ParsedIntent {
       const threshold = parseFloat(thresholdStr);
       const parameters: ExtractedParams = {
         ...base(),
-        token: token ?? "ETH",
+        token:     token ?? "ETH",
         threshold: isNaN(threshold) ? 2000 : threshold,
-        direction: (direction as Direction) ?? "below",
-        chain: "ethereum",
-        schedule: schedule ?? null,
+        direction: toDirection(direction, "below"),
+        // FIX: price alerts are chain-agnostic — price feeds are global
+        chain: null,
       };
-      return { workflowType: "price_alert", confidence: 1, missingRequired: [], clarifyingQuestion: null, parameters };
+      return {
+        workflowType: "price_alert",
+        confidence: 1,
+        missingRequired: [],
+        clarifyingQuestion: null,
+        parameters,
+      };
     },
   },
 
-  // ─── 2. Wallet Balance Monitor ────────────────────────────────────────────
+  // ─── 2. Wallet Transfer Monitor ───────────────────────────────────────────
+  // FIX: renamed from "Wallet Balance Monitor" — workflowType "wallet_monitor"
+  // tracks transfers (incoming/outgoing), not balance levels.
+  // Use Template 5 (balance_alert) for balance level monitoring.
   {
     id: 2,
     workflowType: "wallet_monitor",
-    name: "Wallet Balance Monitor",
+    name: "Wallet Transfer Monitor",
     emoji: "💼",
-    description: "Alert when a wallet's native balance crosses a threshold.",
+    description:
+      "Get a Telegram alert when a wallet receives or sends a transfer above a threshold.",
     params: [
-      { name: "walletAddress", label: "Wallet address", example: "0xABC..." },
-      { name: "threshold",     label: "ETH threshold",  example: "1" },
-      { name: "direction",     label: "above / below",  example: "below" },
-      { name: "chain",         label: "Chain",          example: "ethereum", optional: true },
+      { name: "walletAddress", label: "Wallet address",          example: "0xABC..." },
+      { name: "token",         label: "Token (ETH/USDC/…)",      example: "ETH" },
+      { name: "threshold",     label: "Amount threshold",        example: "1" },
+      { name: "direction",     label: "incoming / outgoing",     example: "incoming" },
+      { name: "chain",         label: "Chain",                   example: "ethereum", optional: true },
     ],
-    build([address, thresholdStr, direction, chain]: string[]): ParsedIntent {
+    build([address, token, thresholdStr, direction, chain]: string[]): ParsedIntent {
       const threshold = parseFloat(thresholdStr);
       const parameters: ExtractedParams = {
         ...base(),
         walletAddress: address ?? null,
-        threshold: isNaN(threshold) ? 1 : threshold,
-        direction: (direction as Direction) ?? "below",
-        token: "ETH",
-        chain: (chain as Chain) ?? "ethereum",
+        token:         token ?? "ETH",
+        threshold:     isNaN(threshold) ? 1 : threshold,
+        // FIX: default to "incoming" — more common use case for wallet monitoring
+        direction:     toDirection(direction, "incoming"),
+        chain:         toChain(chain, "ethereum"),
       };
-      return { workflowType: "wallet_monitor", confidence: 1, missingRequired: [], clarifyingQuestion: null, parameters };
+      return {
+        workflowType: "wallet_monitor",
+        confidence: 1,
+        missingRequired: [],
+        clarifyingQuestion: null,
+        parameters,
+      };
     },
   },
 
@@ -99,7 +142,8 @@ export const TEMPLATES: WorkflowTemplate[] = [
     workflowType: "defi_health",
     name: "DeFi Health Monitor",
     emoji: "🏥",
-    description: "Alert when your Aave/Compound/Morpho health factor drops below a threshold.",
+    description:
+      "Get a Telegram alert when your Aave/Compound/Morpho health factor drops below a threshold.",
     params: [
       { name: "walletAddress", label: "Wallet address",   example: "0xABC..." },
       { name: "threshold",     label: "Health threshold", example: "1.5" },
@@ -111,12 +155,20 @@ export const TEMPLATES: WorkflowTemplate[] = [
       const parameters: ExtractedParams = {
         ...base(),
         walletAddress: address ?? null,
-        threshold: isNaN(threshold) ? 1.5 : threshold,
-        protocol: (protocol as Protocol) ?? "aave",
-        metric: "healthFactor" as Metric,
-        chain: (chain as Chain) ?? "ethereum",
+        threshold:     isNaN(threshold) ? 1.5 : threshold,
+        protocol:      toProtocol(protocol, "aave"),
+        metric:        "healthFactor" as Metric,
+        chain:         toChain(chain, "ethereum"),
+        // FIX: direction is always "below" for health factor alerts
+        direction:     "below",
       };
-      return { workflowType: "defi_health", confidence: 1, missingRequired: [], clarifyingQuestion: null, parameters };
+      return {
+        workflowType: "defi_health",
+        confidence: 1,
+        missingRequired: [],
+        clarifyingQuestion: null,
+        parameters,
+      };
     },
   },
 
@@ -126,24 +178,34 @@ export const TEMPLATES: WorkflowTemplate[] = [
     workflowType: "auto_compound",
     name: "Auto-Compound Rewards",
     emoji: "🔄",
-    description: "Automatically harvest and reinvest DeFi rewards on a schedule.",
+    description:
+      "Automatically harvest and reinvest DeFi rewards on a schedule. Sends a Telegram confirmation after each compound.",
     params: [
-      { name: "walletAddress", label: "Wallet address",  example: "0xABC..." },
-      { name: "protocol",      label: "Protocol",        example: "aave" },
-      { name: "minRewardUSD",  label: "Min reward (USD)", example: "10",        optional: true },
-      { name: "chain",         label: "Chain",           example: "ethereum",   optional: true },
+      { name: "walletAddress", label: "Wallet address",   example: "0xABC..." },
+      { name: "protocol",      label: "Protocol",         example: "aave" },
+      // FIX: schedule was hardcoded to "daily" with no user input — now a param
+      { name: "schedule",      label: "daily / weekly",   example: "daily",    optional: true },
+      { name: "minRewardUSD",  label: "Min reward (USD)", example: "10",       optional: true },
+      { name: "chain",         label: "Chain",            example: "ethereum", optional: true },
     ],
-    build([address, protocol, minRewardStr, chain]: string[]): ParsedIntent {
+    build([address, protocol, schedule, minRewardStr, chain]: string[]): ParsedIntent {
       const minRewardUSD = parseFloat(minRewardStr);
       const parameters: ExtractedParams = {
         ...base(),
         walletAddress: address ?? null,
-        protocol: (protocol as Protocol) ?? "aave",
-        minRewardUSD: isNaN(minRewardUSD) ? 10 : minRewardUSD,
-        chain: (chain as Chain) ?? "ethereum",
-        schedule: "daily",
+        protocol:      toProtocol(protocol, "aave"),
+        // FIX: respect user's schedule input, default to "daily"
+        schedule:      schedule ?? "daily",
+        minRewardUSD:  isNaN(minRewardUSD) ? 10 : minRewardUSD,
+        chain:         toChain(chain, "ethereum"),
       };
-      return { workflowType: "auto_compound", confidence: 1, missingRequired: [], clarifyingQuestion: null, parameters };
+      return {
+        workflowType: "auto_compound",
+        confidence: 1,
+        missingRequired: [],
+        clarifyingQuestion: null,
+        parameters,
+      };
     },
   },
 
@@ -153,41 +215,42 @@ export const TEMPLATES: WorkflowTemplate[] = [
     workflowType: "balance_alert",
     name: "Token Balance Alert",
     emoji: "💰",
-    description: "Alert when a specific token balance drops below a threshold.",
+    description:
+      "Get a Telegram alert when a specific token balance drops below a threshold.",
     params: [
       { name: "walletAddress", label: "Wallet address",  example: "0xABC..." },
       { name: "token",         label: "Token symbol",    example: "USDC" },
-      { name: "threshold",     label: "Balance min",     example: "500" },
-      { name: "chain",         label: "Chain",           example: "base",     optional: true },
+      { name: "threshold",     label: "Minimum balance", example: "500" },
+      // FIX: example was "base" but default was "ethereum" — now consistent
+      { name: "chain",         label: "Chain",           example: "ethereum", optional: true },
     ],
     build([address, token, thresholdStr, chain]: string[]): ParsedIntent {
       const threshold = parseFloat(thresholdStr);
       const parameters: ExtractedParams = {
         ...base(),
         walletAddress: address ?? null,
-        token: token ?? "USDC",
-        threshold: isNaN(threshold) ? 500 : threshold,
-        direction: "below" as Direction,
-        chain: (chain as Chain) ?? "ethereum",
+        token:         token ?? "USDC",
+        threshold:     isNaN(threshold) ? 500 : threshold,
+        direction:     "below",
+        chain:         toChain(chain, "ethereum"),
       };
-      return { workflowType: "balance_alert", confidence: 1, missingRequired: [], clarifyingQuestion: null, parameters };
+      return {
+        workflowType: "balance_alert",
+        confidence: 1,
+        missingRequired: [],
+        clarifyingQuestion: null,
+        parameters,
+      };
     },
   },
 ];
 
-// ─── Helpers ──────────────────────────────────────────────────────────────────
+// ─── Public helpers ───────────────────────────────────────────────────────────
 
-/** Find a template by its 1-based ID. */
 export function getTemplate(id: number): WorkflowTemplate | undefined {
   return TEMPLATES.find((t) => t.id === id);
 }
 
-/**
- * Parse a /dep-temp argument string of the form:
- *   <id> <arg1> <arg2> ...
- *
- * Returns the template + intent on success, or an error string on failure.
- */
 export function parseDepTempCommand(
   rawArgs: string
 ): { template: WorkflowTemplate; intent: ParsedIntent } | { error: string } {
@@ -195,12 +258,16 @@ export function parseDepTempCommand(
   const id = parseInt(parts[0], 10);
 
   if (isNaN(id)) {
-    return { error: "Please specify a template number.\n\nExample: `/dep-temp 1 ETH 2000 below`" };
+    return {
+      error: "Please specify a template number.\n\nExample: `/deptemp 1 ETH 2000 below`",
+    };
   }
 
   const template = getTemplate(id);
   if (!template) {
-    return { error: `Template #${id} does not exist. Send /templates to see all options.` };
+    return {
+      error: `Template #${id} does not exist. Send /templates to see all options.`,
+    };
   }
 
   const requiredParams = template.params.filter((p) => !p.optional);
@@ -213,9 +280,12 @@ export function parseDepTempCommand(
     return {
       error:
         `❌ Not enough arguments for *${template.name}*\\.\n\n` +
-        `Usage: \`/dep-temp ${id} ${usage}\`\n\n` +
+        `Usage: \`/deptemp ${id} ${usage}\`\n\n` +
         template.params
-          .map((p, i) => `  ${i + 1}\\. ${p.label}${p.optional ? " _(optional)_" : ""}`)
+          .map(
+            (p, i) =>
+              `  ${i + 1}\\. ${p.label}${p.optional ? " _(optional)_" : ""}`
+          )
           .join("\n"),
     };
   }

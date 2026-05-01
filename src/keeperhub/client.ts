@@ -119,12 +119,19 @@ export async function createWorkflow(
   description: string,
   graph: KHWorkflowGraph
 ): Promise<DeployResult> {
-  const projectId = process.env.KEEPERHUB_PROJECT_ID;
+  // const projectId = process.env.KEEPERHUB_PROJECT_ID;
 
   try {
-    // Step 1 — create the workflow shell
-    const createBody: Record<string, unknown> = { name, description };
-    if (projectId) createBody.projectId = projectId;
+    // Step 1 — create the workflow with full graph
+    const createBody: Record<string, unknown> = {
+      name,
+      description,
+      nodes: graph.nodes,
+      edges: graph.edges,
+      visibility: "private",
+    };
+    
+    // if (projectId) createBody.projectId = projectId;
 
     const created = await khPost<KHCreateResponse>(
       "/workflows/create",
@@ -132,21 +139,9 @@ export async function createWorkflow(
     );
 
     const workflowId = created.id;
-    console.log(`[KeeperHub] Created shell workflow: ${workflowId}`);
+    console.log(`[KeeperHub] Deployed workflow: ${workflowId}`);
 
-    // Step 2 — push the full node/edge graph
-    await khPatch(`/workflows/${workflowId}`, {
-      name,
-      description,
-      ...(projectId ? { projectId } : {}),
-      nodes: graph.nodes,
-      edges: graph.edges,
-      visibility: "private",
-    });
-
-    console.log(`[KeeperHub] Patched workflow graph: ${workflowId}`);
-
-    const workflowUrl = `https://keeperhub.com/workflows/${workflowId}`;
+    const workflowUrl = `https://app.keeperhub.com/workflows/${workflowId}`;
     return { success: true, workflowId, workflowUrl };
   } catch (err: unknown) {
     const message = err instanceof Error ? err.message : String(err);
@@ -154,6 +149,8 @@ export async function createWorkflow(
     return { success: false, error: message };
   }
 }
+
+
 
 /**
  * List all workflows for the authenticated org (optionally scoped to a project).

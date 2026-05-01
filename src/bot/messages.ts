@@ -38,7 +38,8 @@ What would you like to automate?`;
 
 *Quick Templates (no AI needed):*
 /templates — see all preset templates
-/dep-temp <N> <params> — deploy a template directly
+/deptemp <N> <params> — deploy a template directly
+/jsonup — deploy a workflow from a KeeperHub JSON file
 
 *Workflow Management:*
 /list — see your active workflows
@@ -273,7 +274,7 @@ Send me a message to create your first one!`;
       return (
         `${t.emoji} *${t.id}. ${t.name}*\n` +
         `${t.description}\n` +
-        `\`/dep-temp ${t.id} ${usage}\``
+        `\`/deptemp ${t.id} ${usage}\``
       );
     }).join("\n\n");
 
@@ -296,7 +297,7 @@ Send me a message to create your first one!`;
       .join("\n");
     return (
       `${t.emoji} *${t.name}*\n${t.description}\n\n` +
-      `Usage:\n\`/dep-temp ${t.id} ${usage}\`\n\n` +
+      `Usage:\n\`/deptemp ${t.id} ${usage}\`\n\n` +
       `Parameters:\n${paramList}`
     );
   },
@@ -308,6 +309,35 @@ Send me a message to create your first one!`;
       `\`/natural Alert me when ETH drops below $2000\`\n\n` +
       `Or type your message directly (no command needed).`
     );
+  },
+
+  // ─── /jsonup ────────────────────────────────────────────────────────────────
+
+  jsonupPrompt(): string {
+    return (
+      `📤 *Deploy from JSON*\n\n` +
+      `Upload your KeeperHub workflow JSON file and I'll deploy it instantly.\n\n` +
+      '_Send the `.json` file now, or /cancel to go back._'
+    );
+  },
+
+  jsonupInvalidFile(): string {
+    return (
+      `❌ That doesn't look like a valid KeeperHub workflow JSON.\n\n` +
+      'The file must contain at minimum a `name` field plus `nodes` and `edges` arrays.\n\n' +
+      `Please try again or /cancel to go back.`
+    );
+  },
+
+  jsonupParseError(detail: string): string {
+    return (
+      `❌ Failed to parse JSON file: ${detail}\n\n` +
+      `Make sure the file is valid JSON and try again, or /cancel to go back.`
+    );
+  },
+
+  jsonupDeploying(name: string): string {
+    return `⟳ Deploying *${name}* from JSON…`;
   },
 };
 

@@ -143,15 +143,15 @@ bot.command("templates", async (ctx) => {
   }
 });
 
-// ─── /dep-temp ────────────────────────────────────────────────────────────────
-// Usage: /dep-temp <templateId> <arg1> <arg2> ...
+// ─── /deptemp ────────────────────────────────────────────────────────────────
+// Usage: /deptemp <templateId> <arg1> <arg2> ...
 // Bypasses Gemini entirely — builds intent from template, then deploys.
-bot.command("dep_temp", async (ctx) => {
+bot.command("deptemp", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
 
-    const raw = ctx.message?.text?.replace(/^\/dep[_-]temp\s*/i, "").trim() ?? "";
+    const raw = ctx.message?.text?.replace(/^\/deptemp\s*/i, "").trim() ?? "";
 
     if (!raw) {
       await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
@@ -174,7 +174,7 @@ bot.command("dep_temp", async (ctx) => {
 
     let graph;
     try {
-      graph = buildWorkflow(intent);
+      graph = buildWorkflow(intent, String(ctx.chat.id));
     } catch (buildErr) {
       const msg = buildErr instanceof Error ? buildErr.message : String(buildErr);
       await ctx.reply(`❌ Failed to build workflow: ${msg}`);
@@ -200,46 +200,14 @@ bot.command("dep_temp", async (ctx) => {
     };
     addWorkflow(userId, deployed);
 
-    console.log(`[dep-temp] Deployed "${name}" (${result.workflowId}) for user ${userId}`);
+    console.log(`[deptemp] Deployed "${name}" (${result.workflowId}) for user ${userId}`);
     await ctx.reply(Messages.deploySuccess(name, result.workflowUrl), {
       parse_mode: "Markdown",
     });
   } catch (err) {
-    console.error("[/dep-temp] Error:", err);
+    console.error("[/deptemp] Error:", err);
     await ctx.reply("Something went wrong. Please try again.");
   }
-});
-
-// Grammy also registers the hyphen variant
-bot.command("dep-temp", async (ctx) => {
-  // Grammy normalises hyphens to underscores, but add alias just in case
-  const userId = ctx.from?.id;
-  if (!userId) return;
-  const raw = ctx.message?.text?.replace(/^\/dep[_-]temp\s*/i, "").trim() ?? "";
-  if (!raw) {
-    await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
-    return;
-  }
-  const parsed = parseDepTempCommand(raw);
-  if ("error" in parsed) {
-    await ctx.reply(parsed.error, { parse_mode: "Markdown" });
-    return;
-  }
-  const { template, intent } = parsed;
-  const { name, description } = workflowMeta(intent);
-  await ctx.reply(`⟳ Deploying *${name}* from template ${template.emoji}…`, { parse_mode: "Markdown" });
-  let graph;
-  try { graph = buildWorkflow(intent); } catch (e) {
-    await ctx.reply(`❌ Build error: ${e instanceof Error ? e.message : e}`);
-    return;
-  }
-  const result = await createWorkflow(name, description, graph);
-  if (!result.success || !result.workflowId || !result.workflowUrl) {
-    await ctx.reply(`❌ Deployment failed: ${result.error ?? "unknown"}`);
-    return;
-  }
-  addWorkflow(userId, { id: result.workflowId, name, type: intent.workflowType, url: result.workflowUrl, createdAt: Date.now(), paused: false });
-  await ctx.reply(Messages.deploySuccess(name, result.workflowUrl), { parse_mode: "Markdown" });
 });
 
 // ─── /natural ─────────────────────────────────────────────────────────────────
@@ -274,6 +242,132 @@ bot.command("cancel", async (ctx) => {
     console.error("[/cancel] Error:", err);
   }
 });
+
+// ─── /jsonup ─────────────────────────────────────────────────────────────────
+// Puts the user in AWAITING_JSON_UPLOAD state; next document message deploys.
+bot.command("jsonup", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    updateSession(userId, { state: "AWAITING_JSON_UPLOAD" });
+    await ctx.reply(Messages.jsonupPrompt(), { parse_mode: "Markdown" });
+  } catch (err) {
+    console.error("[/jsonup] Error:", err);
+  }
+});
+
+// ─── Document upload handler (used by /jsonup) ────────────────────────────────
+bot.on("message:document", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+
+    const session = getSession(userId);
+    if (session.state !== "AWAITING_JSON_UPLOAD") {
+      // Not in upload mode — ignore silently
+      return;
+    }
+
+    const doc = ctx.message.document;
+    const fileName = doc.file_name ?? "workflow.json";
+
+    // ── 1. Validate file type ──────────────────────────────────────────────────
+    if (!fileName.toLowerCase().endsWith(".json") && doc.mime_type !== "application/json") {
+      await ctx.reply(
+        "⚠️ Please send a `.json` file.",
+        { parse_mode: "Markdown" }
+      );
+      return;
+    }
+
+    // ── 2. Download the file ──────────────────────────────────────────────────
+    let rawText: string;
+    try {
+      const fileInfo = await ctx.api.getFile(doc.file_id);
+      const filePath = fileInfo.file_path;
+      if (!filePath) throw new Error("Telegram returned no file_path");
+
+      const botToken = process.env.TELEGRAM_BOT_TOKEN!;
+      const downloadUrl = `https://api.telegram.org/file/bot${botToken}/${filePath}`;
+      const response = await fetch(downloadUrl);
+      if (!response.ok) throw new Error(`Download failed: HTTP ${response.status}`);
+      rawText = await response.text();
+    } catch (dlErr) {
+      const msg = dlErr instanceof Error ? dlErr.message : String(dlErr);
+      console.error("[/jsonup] Download error:", msg);
+      await ctx.reply(Messages.jsonupParseError(`Could not download file — ${msg}`), {
+        parse_mode: "Markdown",
+      });
+      return;
+    }
+
+    // ── 3. Parse JSON ─────────────────────────────────────────────────────────
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    let parsed: any;
+    try {
+      parsed = JSON.parse(rawText);
+    } catch (jsonErr) {
+      const msg = jsonErr instanceof Error ? jsonErr.message : String(jsonErr);
+      await ctx.reply(Messages.jsonupParseError(msg), { parse_mode: "Markdown" });
+      return;
+    }
+
+    // ── 4. Validate structure ─────────────────────────────────────────────────
+    if (
+      typeof parsed !== "object" ||
+      parsed === null ||
+      !Array.isArray(parsed.nodes) ||
+      !Array.isArray(parsed.edges)
+    ) {
+      await ctx.reply(Messages.jsonupInvalidFile(), { parse_mode: "Markdown" });
+      return;
+    }
+
+    const workflowName: string =
+      typeof parsed.name === "string" && parsed.name.trim()
+        ? parsed.name.trim()
+        : fileName.replace(/\.json$/i, "");
+
+    const workflowDescription: string =
+      typeof parsed.description === "string" ? parsed.description : "Imported via Rigel bot";
+
+    // ── 5. Deploy ─────────────────────────────────────────────────────────────
+    updateSession(userId, { state: "DEPLOYING" });
+    await ctx.reply(Messages.jsonupDeploying(workflowName), { parse_mode: "Markdown" });
+
+    const graph = { nodes: parsed.nodes, edges: parsed.edges };
+    const result = await createWorkflow(workflowName, workflowDescription, graph);
+
+    if (!result.success || !result.workflowId || !result.workflowUrl) {
+      updateSession(userId, { state: "IDLE" });
+      await ctx.reply(
+        `❌ KeeperHub deployment failed: ${result.error ?? "unknown error"}`
+      );
+      return;
+    }
+
+    // ── 6. Record & notify ────────────────────────────────────────────────────
+    const deployed: DeployedWorkflow = {
+      id: result.workflowId,
+      name: workflowName,
+      type: "unknown",
+      url: result.workflowUrl,
+      createdAt: Date.now(),
+      paused: false,
+    };
+    addWorkflow(userId, deployed);
+    updateSession(userId, { state: "IDLE" });
+
+    console.log(`[jsonup] Deployed "${workflowName}" (${result.workflowId}) for user ${userId}`);
+    await ctx.reply(Messages.deploySuccess(workflowName, result.workflowUrl), {
+      parse_mode: "Markdown",
+    });
+  } catch (err) {
+    console.error("[message:document] Error:", err);
+    await ctx.reply("Something went wrong processing the file. Please try again.");
+  }
+});
+
 
 // ─── Text messages → Conversation state machine ───────────────────────────────
 bot.on("message:text", async (ctx) => {

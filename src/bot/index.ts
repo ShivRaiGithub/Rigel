@@ -2,12 +2,14 @@ import "dotenv/config";
 import { Bot, GrammyError, HttpError } from "grammy";
 import { Messages } from "./messages";
 import { handleMessage } from "./conversations";
-import { getSession, updateSession, resetSession } from "../store/userStore";
-import { parseDepTempCommand } from "../templates";
-import { buildWorkflow, workflowMeta } from "../workflows/builder";
-import { createWorkflow } from "../keeperhub/client";
+import {
+  getSession,
+  updateSession,
+  resetSession,
+  replaceWorkflows,
+} from "../store/userStore";
+import { createWorkflow, listWorkflows } from "../keeperhub/client";
 import { DeployedWorkflow } from "../workflows/types";
-import { addWorkflow } from "../store/userStore";
 
 // ─── Validate env ─────────────────────────────────────────────────────────────
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -17,6 +19,17 @@ if (!BOT_TOKEN) {
 
 // ─── Init bot ─────────────────────────────────────────────────────────────────
 const bot = new Bot(BOT_TOKEN);
+
+async function refreshWorkflows(userId: number): Promise<DeployedWorkflow[]> {
+  const workflows = await listWorkflows();
+  replaceWorkflows(userId, workflows);
+  return workflows;
+}
+
+function workflowFetchError(err: unknown): string {
+  const message = err instanceof Error ? err.message : String(err);
+  return `Could not fetch workflows from KeeperHub.\n\nError: ${message}`;
+}
 
 // ─── /start ───────────────────────────────────────────────────────────────────
 bot.command("start", async (ctx) => {
@@ -41,16 +54,17 @@ bot.command("list", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    if (session.deployedWorkflows.length === 0) {
+    const workflows = await refreshWorkflows(userId);
+    if (workflows.length === 0) {
       await ctx.reply(Messages.noWorkflows());
     } else {
-      await ctx.reply(Messages.workflowList(session.deployedWorkflows), {
+      await ctx.reply(Messages.workflowList(workflows), {
         parse_mode: "Markdown",
       });
     }
   } catch (err) {
     console.error("[/list] Error:", err);
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -59,8 +73,8 @@ bot.command("pause", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    const active = session.deployedWorkflows.filter((w) => !w.paused);
+    const workflows = await refreshWorkflows(userId);
+    const active = workflows.filter((w) => !w.paused);
     if (active.length === 0) {
       await ctx.reply("No active workflows to pause.");
       return;
@@ -71,6 +85,7 @@ bot.command("pause", async (ctx) => {
     });
   } catch (err) {
     console.error("[/pause] Error:", err);
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -79,8 +94,8 @@ bot.command("resume", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    const paused = session.deployedWorkflows.filter((w) => w.paused);
+    const workflows = await refreshWorkflows(userId);
+    const paused = workflows.filter((w) => w.paused);
     if (paused.length === 0) {
       await ctx.reply("No paused workflows to resume.");
       return;
@@ -91,6 +106,7 @@ bot.command("resume", async (ctx) => {
     });
   } catch (err) {
     console.error("[/resume] Error:", err);
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -99,18 +115,19 @@ bot.command("delete", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    if (session.deployedWorkflows.length === 0) {
+    const workflows = await refreshWorkflows(userId);
+    if (workflows.length === 0) {
       await ctx.reply(Messages.noWorkflows());
       return;
     }
     updateSession(userId, { state: "SELECTING_DELETE", pendingAction: "delete" });
     await ctx.reply(
-      Messages.selectWorkflow(session.deployedWorkflows, "delete"),
+      Messages.selectWorkflow(workflows, "delete"),
       { parse_mode: "Markdown" }
     );
   } catch (err) {
     console.error("[/delete] Error:", err);
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -119,18 +136,19 @@ bot.command("status", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    if (session.deployedWorkflows.length === 0) {
+    const workflows = await refreshWorkflows(userId);
+    if (workflows.length === 0) {
       await ctx.reply(Messages.noWorkflows());
       return;
     }
     updateSession(userId, { state: "SELECTING_STATUS", pendingAction: "status" });
     await ctx.reply(
-      Messages.selectWorkflow(session.deployedWorkflows, "check status of"),
+      Messages.selectWorkflow(workflows, "check status of"),
       { parse_mode: "Markdown" }
     );
   } catch (err) {
     console.error("[/status] Error:", err);
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -139,18 +157,19 @@ bot.command("run", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    if (session.deployedWorkflows.length === 0) {
+    const workflows = await refreshWorkflows(userId);
+    if (workflows.length === 0) {
       await ctx.reply(Messages.noWorkflows());
       return;
     }
     updateSession(userId, { state: "SELECTING_RUN", pendingAction: "run" });
     await ctx.reply(
-      Messages.selectWorkflow(session.deployedWorkflows, "run now"),
+      Messages.selectWorkflow(workflows, "run now"),
       { parse_mode: "Markdown" }
     );
   } catch (err) {
     console.error("[/run] Error:", err);
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -159,115 +178,19 @@ bot.command("export", async (ctx) => {
   try {
     const userId = ctx.from?.id;
     if (!userId) return;
-    const session = getSession(userId);
-    if (session.deployedWorkflows.length === 0) {
+    const workflows = await refreshWorkflows(userId);
+    if (workflows.length === 0) {
       await ctx.reply(Messages.noWorkflows());
       return;
     }
     updateSession(userId, { state: "SELECTING_EXPORT", pendingAction: "export" });
     await ctx.reply(
-      Messages.selectWorkflow(session.deployedWorkflows, "export as JSON"),
+      Messages.selectWorkflow(workflows, "export as JSON"),
       { parse_mode: "Markdown" }
     );
   } catch (err) {
     console.error("[/export] Error:", err);
-  }
-});
-
-// ─── /templates ───────────────────────────────────────────────────────────────
-bot.command("templates", async (ctx) => {
-  try {
-    await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
-  } catch (err) {
-    console.error("[/templates] Error:", err);
-  }
-});
-
-// ─── /deptemp ────────────────────────────────────────────────────────────────
-// Usage: /deptemp <templateId> <arg1> <arg2> ...
-// Bypasses Gemini entirely — builds intent from template, then deploys.
-bot.command("deptemp", async (ctx) => {
-  try {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    const raw = ctx.message?.text?.replace(/^\/deptemp\s*/i, "").trim() ?? "";
-
-    if (!raw) {
-      await ctx.reply(Messages.templateList(), { parse_mode: "Markdown" });
-      return;
-    }
-
-    const parsed = parseDepTempCommand(raw);
-
-    if ("error" in parsed) {
-      await ctx.reply(parsed.error, { parse_mode: "Markdown" });
-      return;
-    }
-
-    const { template, intent } = parsed;
-    const { name, description } = workflowMeta(intent);
-
-    await ctx.reply(`⟳ Deploying *${name}* from template ${template.emoji}…`, {
-      parse_mode: "Markdown",
-    });
-
-    let graph;
-    try {
-      graph = buildWorkflow(intent, String(ctx.chat.id));
-    } catch (buildErr) {
-      const msg = buildErr instanceof Error ? buildErr.message : String(buildErr);
-      await ctx.reply(`❌ Failed to build workflow: ${msg}`);
-      return;
-    }
-
-    const result = await createWorkflow(name, description, graph);
-
-    if (!result.success || !result.workflowId || !result.workflowUrl) {
-      await ctx.reply(
-        `❌ KeeperHub deployment failed: ${result.error ?? "unknown error"}`
-      );
-      return;
-    }
-
-    const deployed: DeployedWorkflow = {
-      id: result.workflowId,
-      name,
-      type: intent.workflowType,
-      url: result.workflowUrl,
-      createdAt: Date.now(),
-      paused: false,
-    };
-    addWorkflow(userId, deployed);
-
-    console.log(`[deptemp] Deployed "${name}" (${result.workflowId}) for user ${userId}`);
-    await ctx.reply(Messages.deploySuccess(name, result.workflowUrl), {
-      parse_mode: "Markdown",
-    });
-  } catch (err) {
-    console.error("[/deptemp] Error:", err);
-    await ctx.reply("Something went wrong. Please try again.");
-  }
-});
-
-// ─── /natural ─────────────────────────────────────────────────────────────────
-// /natural <message> — explicit AI-mode entry point
-bot.command("natural", async (ctx) => {
-  try {
-    const userId = ctx.from?.id;
-    if (!userId) return;
-
-    const text = ctx.message?.text?.replace(/^\/natural\s*/i, "").trim() ?? "";
-
-    if (!text) {
-      await ctx.reply(Messages.naturalHelp(), { parse_mode: "Markdown" });
-      return;
-    }
-
-    await handleMessage(ctx, userId, text);
-  } catch (err) {
-    console.error("[/natural] Error:", err);
-    await ctx.reply("Something went wrong. Please try again.");
+    await ctx.reply(workflowFetchError(err));
   }
 });
 
@@ -386,16 +309,8 @@ bot.on("message:document", async (ctx) => {
       return;
     }
 
-    // ── 6. Record & notify ────────────────────────────────────────────────────
-    const deployed: DeployedWorkflow = {
-      id: result.workflowId,
-      name: workflowName,
-      type: "unknown",
-      url: result.workflowUrl,
-      createdAt: Date.now(),
-      paused: false,
-    };
-    addWorkflow(userId, deployed);
+    // ── 6. Refresh & notify ───────────────────────────────────────────────────
+    await refreshWorkflows(userId);
     updateSession(userId, { state: "IDLE" });
 
     console.log(`[jsonup] Deployed "${workflowName}" (${result.workflowId}) for user ${userId}`);

@@ -1,4 +1,4 @@
-import { DeployResult } from "../workflows/types";
+import { DeployResult, DeployedWorkflow } from "../workflows/types";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -43,6 +43,17 @@ export interface WorkflowExecutionResult {
 }
 
 type KeeperHubWorkflowResponse = Record<string, unknown>;
+
+type KeeperHubWorkflowListItem = KeeperHubWorkflowResponse & {
+  id: string;
+  _id?: string;
+  workflowId?: string;
+  name?: string;
+  title?: string;
+  description?: string;
+  createdAt?: string;
+  created_at?: string;
+};
 
 class KeeperHubHttpError extends Error {
   constructor(
@@ -170,6 +181,8 @@ export async function createWorkflow(
       nodes: graph.nodes,
       edges: graph.edges,
       visibility: "private",
+      enabled: true,
+      paused: false,
     };
     
     // if (projectId) createBody.projectId = projectId;
@@ -181,6 +194,11 @@ export async function createWorkflow(
 
     const workflowId = created.id;
     console.log(`[KeeperHub] Deployed workflow: ${workflowId}`);
+
+    const resumeResult = await resumeWorkflow(workflowId);
+    if (!resumeResult.success) {
+      throw new Error(resumeResult.error ?? "Workflow was created but could not be activated");
+    }
 
     const workflowUrl = `https://app.keeperhub.com/workflows/${workflowId}`;
     return { success: true, workflowId, workflowUrl };
@@ -197,21 +215,42 @@ export async function createWorkflow(
  * List all workflows for the authenticated org (optionally scoped to a project).
  */
 export async function listWorkflows(): Promise<
-  Array<{ id: string; name: string; description: string }>
+  DeployedWorkflow[]
 > {
   const projectId = process.env.KEEPERHUB_PROJECT_ID;
   const qs = projectId ? `?projectId=${projectId}` : "";
+  const workflows = await fetchWorkflowList(qs);
 
-  const res = await fetch(`${BASE_URL}/workflows${qs}`, {
-    method: "GET",
-    headers: getHeaders(),
-  });
-
-  if (!res.ok) {
-    throw new Error(`KeeperHub GET /workflows failed — HTTP ${res.status}`);
+  if (workflows.length === 0 && projectId) {
+    console.warn(
+      "[KeeperHub] Project-scoped workflow list was empty; retrying without KEEPERHUB_PROJECT_ID"
+    );
+    return fetchWorkflowList("");
   }
 
-  return res.json() as Promise<Array<{ id: string; name: string; description: string }>>;
+  return workflows;
+}
+
+async function fetchWorkflowList(qs: string): Promise<DeployedWorkflow[]> {
+  const payload = await khGet<unknown>(`/workflows${qs}`);
+  const workflows = extractWorkflowArray(payload);
+
+  const detailedWorkflows = await Promise.all(
+    workflows.map(async (workflow) => {
+      try {
+        const id = getWorkflowId(workflow);
+        if (!id) return workflow;
+        return {
+          ...workflow,
+          ...(await getWorkflow(id)),
+        } as KeeperHubWorkflowListItem;
+      } catch {
+        return workflow;
+      }
+    })
+  );
+
+  return detailedWorkflows.map(toDeployedWorkflow);
 }
 
 /**
@@ -335,6 +374,59 @@ function isWorkflowEnabled(workflow: KeeperHubWorkflowResponse): boolean | null 
   if (typeof paused === "boolean") return !paused;
 
   return null;
+}
+
+function toDeployedWorkflow(workflow: KeeperHubWorkflowListItem): DeployedWorkflow {
+  const id = getWorkflowId(workflow) ?? "unknown";
+  const name = workflow.name ?? workflow.title;
+  const createdAtRaw = workflow.createdAt ?? workflow.created_at;
+  const createdAt =
+    typeof createdAtRaw === "string"
+      ? new Date(createdAtRaw).getTime()
+      : Date.now();
+
+  return {
+    id,
+    name: typeof name === "string" && name.trim()
+      ? name
+      : id,
+    type: "unknown",
+    url: `https://app.keeperhub.com/workflows/${id}`,
+    createdAt: Number.isFinite(createdAt) ? createdAt : Date.now(),
+    paused: isWorkflowEnabled(workflow) === false,
+  };
+}
+
+function getWorkflowId(workflow: KeeperHubWorkflowListItem): string | null {
+  const id = workflow.id ?? workflow._id ?? workflow.workflowId;
+  return typeof id === "string" && id.trim() ? id : null;
+}
+
+function extractWorkflowArray(payload: unknown): KeeperHubWorkflowListItem[] {
+  if (Array.isArray(payload)) return payload.filter(isWorkflowListItem);
+
+  if (payload && typeof payload === "object") {
+    const record = payload as Record<string, unknown>;
+    for (const key of ["workflows", "items", "results", "data"]) {
+      const value = record[key];
+      if (Array.isArray(value)) return value.filter(isWorkflowListItem);
+      if (value && typeof value === "object") {
+        const nested = extractWorkflowArray(value);
+        if (nested.length > 0) return nested;
+      }
+    }
+
+    console.warn(
+      `[KeeperHub] Could not find workflow array in response keys: ${Object.keys(record).join(", ")}`
+    );
+  }
+
+  return [];
+}
+
+function isWorkflowListItem(value: unknown): value is KeeperHubWorkflowListItem {
+  if (!value || typeof value !== "object") return false;
+  return getWorkflowId(value as KeeperHubWorkflowListItem) !== null;
 }
 
 // ─── Execution history ────────────────────────────────────────────────────────

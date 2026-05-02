@@ -32,8 +32,28 @@ interface KHCreateResponse {
 }
 
 interface KHErrorResponse {
-  error?: string;
+  error?: string | { message?: string; code?: string };
   message?: string;
+}
+
+export interface WorkflowExecutionResult {
+  executionId?: string;
+  runId?: string;
+  status?: string;
+}
+
+type KeeperHubWorkflowResponse = Record<string, unknown>;
+
+class KeeperHubHttpError extends Error {
+  constructor(
+    public method: string,
+    public path: string,
+    public status: number,
+    message: string
+  ) {
+    super(`KeeperHub ${method} ${path} failed — ${message}`);
+    this.name = "KeeperHubHttpError";
+  }
 }
 
 // ─── Config ───────────────────────────────────────────────────────────────────
@@ -44,7 +64,7 @@ interface KHErrorResponse {
  * (e.g. https://app.keeperhub.com/api).
  */
 const BASE_URL =
-  (process.env.KEEPERHUB_BASE_URL ?? "https://keeperhub.com/api").replace(
+  (process.env.KEEPERHUB_BASE_URL ?? "https://app.keeperhub.com/api").replace(
     /\/$/,
     ""
   );
@@ -63,46 +83,67 @@ function getHeaders(): Record<string, string> {
 
 // ─── HTTP helpers ─────────────────────────────────────────────────────────────
 
-async function khPost<T>(path: string, body: unknown): Promise<T> {
+function formatKeeperHubError(
+  method: string,
+  path: string,
+  status: number,
+  statusText: string,
+  errBody?: KHErrorResponse
+): KeeperHubHttpError {
+  const nestedMessage =
+    typeof errBody?.error === "object" ? errBody.error.message : errBody?.error;
+  const message = `HTTP ${status}: ${nestedMessage ?? errBody?.message ?? statusText}`;
+  return new KeeperHubHttpError(method, path, status, message);
+}
+
+async function khRequest<T>(
+  method: "GET" | "POST" | "PATCH" | "DELETE",
+  path: string,
+  body?: unknown
+): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
-    method: "POST",
+    method,
     headers: getHeaders(),
-    body: JSON.stringify(body),
+    body: body === undefined ? undefined : JSON.stringify(body),
   });
 
   if (!res.ok) {
-    let errMsg = `HTTP ${res.status}`;
+    let errBody: KHErrorResponse | undefined;
     try {
-      const errBody = (await res.json()) as KHErrorResponse;
-      errMsg += `: ${errBody.error ?? errBody.message ?? res.statusText}`;
+      errBody = (await res.json()) as KHErrorResponse;
     } catch {
-      errMsg += `: ${res.statusText}`;
+      // Keep the original HTTP status text if the error body is not JSON.
     }
-    throw new Error(`KeeperHub POST ${path} failed — ${errMsg}`);
+    throw formatKeeperHubError(method, path, res.status, res.statusText, errBody);
   }
 
-  return res.json() as Promise<T>;
+  if (res.status === 204) return undefined as T;
+  const text = await res.text();
+  if (!text) return undefined as T;
+
+  const parsed = JSON.parse(text) as unknown;
+  if (
+    parsed &&
+    typeof parsed === "object" &&
+    "data" in parsed &&
+    Object.keys(parsed).length === 1
+  ) {
+    return (parsed as { data: T }).data;
+  }
+
+  return parsed as T;
+}
+
+async function khGet<T>(path: string): Promise<T> {
+  return khRequest<T>("GET", path);
+}
+
+async function khPost<T>(path: string, body?: unknown): Promise<T> {
+  return khRequest<T>("POST", path, body);
 }
 
 async function khPatch<T>(path: string, body: unknown): Promise<T> {
-  const res = await fetch(`${BASE_URL}${path}`, {
-    method: "PATCH",
-    headers: getHeaders(),
-    body: JSON.stringify(body),
-  });
-
-  if (!res.ok) {
-    let errMsg = `HTTP ${res.status}`;
-    try {
-      const errBody = (await res.json()) as KHErrorResponse;
-      errMsg += `: ${errBody.error ?? errBody.message ?? res.statusText}`;
-    } catch {
-      errMsg += `: ${res.statusText}`;
-    }
-    throw new Error(`KeeperHub PATCH ${path} failed — ${errMsg}`);
-  }
-
-  return res.json() as Promise<T>;
+  return khRequest<T>("PATCH", path, body);
 }
 
 // ─── Public API ───────────────────────────────────────────────────────────────
@@ -179,7 +220,17 @@ export async function listWorkflows(): Promise<
  */
 export async function pauseWorkflow(workflowId: string): Promise<DeployResult> {
   try {
-    await khPatch(`/workflows/${workflowId}`, { paused: true });
+    try {
+      await khPost(`/workflows/${workflowId}/pause`);
+    } catch (err) {
+      if (!(err instanceof KeeperHubHttpError) || err.status !== 404) throw err;
+      await khPatch(`/workflows/${workflowId}`, { paused: true, enabled: false });
+    }
+
+    const workflow = await getWorkflow(workflowId);
+    if (isWorkflowEnabled(workflow) === true) {
+      throw new Error("KeeperHub accepted the request, but the workflow still appears enabled");
+    }
     return { success: true, workflowId };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -193,7 +244,17 @@ export async function pauseWorkflow(workflowId: string): Promise<DeployResult> {
  */
 export async function resumeWorkflow(workflowId: string): Promise<DeployResult> {
   try {
-    await khPatch(`/workflows/${workflowId}`, { paused: false });
+    try {
+      await khPost(`/workflows/${workflowId}/resume`);
+    } catch (err) {
+      if (!(err instanceof KeeperHubHttpError) || err.status !== 404) throw err;
+      await khPatch(`/workflows/${workflowId}`, { paused: false, enabled: true });
+    }
+
+    const workflow = await getWorkflow(workflowId);
+    if (isWorkflowEnabled(workflow) === false) {
+      throw new Error("KeeperHub accepted the request, but the workflow still appears disabled");
+    }
     return { success: true, workflowId };
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
@@ -230,6 +291,50 @@ export async function deleteWorkflow(workflowId: string): Promise<DeployResult> 
     console.error(`[KeeperHub] deleteWorkflow failed: ${message}`);
     return { success: false, error: message };
   }
+}
+
+export async function getWorkflow(
+  workflowId: string
+): Promise<KeeperHubWorkflowResponse> {
+  return khGet<KeeperHubWorkflowResponse>(`/workflows/${workflowId}`);
+}
+
+export async function triggerWorkflow(
+  workflowId: string
+): Promise<DeployResult & WorkflowExecutionResult> {
+  try {
+    let result: WorkflowExecutionResult;
+    try {
+      result = await khPost<WorkflowExecutionResult>(`/workflows/${workflowId}/trigger`);
+    } catch (err) {
+      if (!(err instanceof KeeperHubHttpError) || err.status !== 404) throw err;
+      result = await khPost<WorkflowExecutionResult>(`/workflow/${workflowId}/execute`);
+    }
+    return { success: true, workflowId, ...result };
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[KeeperHub] triggerWorkflow failed: ${message}`);
+    return { success: false, error: message };
+  }
+}
+
+function isWorkflowEnabled(workflow: KeeperHubWorkflowResponse): boolean | null {
+  for (const key of ["enabled", "isEnabled", "active", "isActive"]) {
+    const value = workflow[key];
+    if (typeof value === "boolean") return value;
+  }
+
+  const status = workflow.status;
+  if (typeof status === "string") {
+    const normalized = status.toLowerCase();
+    if (["paused", "disabled", "inactive"].includes(normalized)) return false;
+    if (["active", "enabled", "running"].includes(normalized)) return true;
+  }
+
+  const paused = workflow.paused;
+  if (typeof paused === "boolean") return !paused;
+
+  return null;
 }
 
 // ─── Execution history ────────────────────────────────────────────────────────

@@ -1,4 +1,4 @@
-import { Context } from "grammy";
+import { Context, InputFile } from "grammy";
 import { Messages } from "./messages";
 import { parseIntent } from "../llm/intentParser";
 import {
@@ -17,6 +17,8 @@ import {
   resumeWorkflow,
   deleteWorkflow,
   getExecutionHistory,
+  getWorkflow,
+  triggerWorkflow,
 } from "../keeperhub/client";
 import { buildWorkflow, workflowMeta } from "../workflows/builder";
 
@@ -88,6 +90,16 @@ function clearManagementState(userId: number): void {
     pendingAction: null,
     pendingDeleteWorkflow: null,
   });
+}
+
+function jsonFileName(name: string, workflowId: string): string {
+  const safeName = name
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+  return `${safeName || workflowId}.json`;
 }
 
 /**
@@ -223,6 +235,61 @@ export async function handleMessage(
     await ctx.reply(Messages.statusMessage(wf.name, executions), {
       parse_mode: "Markdown",
     });
+    return;
+  }
+
+  // ── SELECTING_RUN ──────────────────────────────────────────────────────────
+  if (session.state === "SELECTING_RUN") {
+    const allWfs = session.deployedWorkflows;
+    const choice = parseSelection(messageText);
+    if (choice === null) {
+      await ctx.reply("Please reply with a number from the list, or /cancel");
+      return;
+    }
+    if (choice < 1 || choice > allWfs.length) {
+      await ctx.reply(`Please pick a number between 1 and ${allWfs.length}`);
+      return;
+    }
+    const wf = allWfs[choice - 1];
+    const result = await triggerWorkflow(wf.id);
+    clearManagementState(userId);
+    if (result.success) {
+      await ctx.reply(Messages.runSuccess(wf.name, result), {
+        parse_mode: "Markdown",
+      });
+    } else {
+      await ctx.reply(`⚠️ Could not run workflow. Try again.\n\nError: ${result.error ?? "unknown"}`);
+    }
+    return;
+  }
+
+  // ── SELECTING_EXPORT ───────────────────────────────────────────────────────
+  if (session.state === "SELECTING_EXPORT") {
+    const allWfs = session.deployedWorkflows;
+    const choice = parseSelection(messageText);
+    if (choice === null) {
+      await ctx.reply("Please reply with a number from the list, or /cancel");
+      return;
+    }
+    if (choice < 1 || choice > allWfs.length) {
+      await ctx.reply(`Please pick a number between 1 and ${allWfs.length}`);
+      return;
+    }
+    const wf = allWfs[choice - 1];
+
+    try {
+      const workflow = await getWorkflow(wf.id);
+      const json = JSON.stringify(workflow, null, 2);
+      clearManagementState(userId);
+      await ctx.replyWithDocument(
+        new InputFile(Buffer.from(json, "utf8"), jsonFileName(wf.name, wf.id)),
+        { caption: `Exported ${wf.name}` }
+      );
+    } catch (err) {
+      clearManagementState(userId);
+      const message = err instanceof Error ? err.message : String(err);
+      await ctx.reply(`⚠️ Could not export workflow. Try again.\n\nError: ${message}`);
+    }
     return;
   }
 

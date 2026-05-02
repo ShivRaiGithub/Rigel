@@ -45,6 +45,8 @@ What would you like to automate?`;
 /list — see your active workflows
 /pause — pause a workflow
 /resume — resume a workflow
+/run — manually trigger a workflow
+/export — download workflow JSON
 /delete — delete a workflow
 /status — see recent executions
 /cancel — cancel current action`;
@@ -225,6 +227,19 @@ Send me a message to create your first one!`;
 
   resumeSuccess(name: string): string {
     return `▶️ Resumed: *${name}*\n\nIt's now actively monitoring.`;
+  },
+
+  runSuccess(
+    name: string,
+    result: import("../keeperhub/client").WorkflowExecutionResult
+  ): string {
+    const ids = [
+      result.executionId ? `Execution: \`${result.executionId}\`` : null,
+      result.runId ? `Run: \`${result.runId}\`` : null,
+      result.status ? `Status: \`${result.status}\`` : null,
+    ].filter(Boolean);
+
+    return `▶️ Triggered: *${name}*${ids.length ? `\n\n${ids.join("\n")}` : ""}`;
   },
 
   deleteConfirm(name: string): string {

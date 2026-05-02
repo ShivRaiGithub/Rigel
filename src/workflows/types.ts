@@ -45,10 +45,19 @@ export type ConversationState =
   | "SELECTING_RESUME"
   | "SELECTING_DELETE"
   | "SELECTING_STATUS"
+  | "SELECTING_RUN"
+  | "SELECTING_EXPORT"
   | "CONFIRMING_DELETE"
   | "AWAITING_JSON_UPLOAD";
 
-export type PendingAction = "pause" | "resume" | "delete" | "status" | null;
+export type PendingAction =
+  | "pause"
+  | "resume"
+  | "delete"
+  | "status"
+  | "run"
+  | "export"
+  | null;
 
 // Per-user session stored in memory
 export interface UserSession {

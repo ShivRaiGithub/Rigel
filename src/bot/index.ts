@@ -134,6 +134,46 @@ bot.command("status", async (ctx) => {
   }
 });
 
+// ─── /run ─────────────────────────────────────────────────────────────────────
+bot.command("run", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const session = getSession(userId);
+    if (session.deployedWorkflows.length === 0) {
+      await ctx.reply(Messages.noWorkflows());
+      return;
+    }
+    updateSession(userId, { state: "SELECTING_RUN", pendingAction: "run" });
+    await ctx.reply(
+      Messages.selectWorkflow(session.deployedWorkflows, "run now"),
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    console.error("[/run] Error:", err);
+  }
+});
+
+// ─── /export ──────────────────────────────────────────────────────────────────
+bot.command("export", async (ctx) => {
+  try {
+    const userId = ctx.from?.id;
+    if (!userId) return;
+    const session = getSession(userId);
+    if (session.deployedWorkflows.length === 0) {
+      await ctx.reply(Messages.noWorkflows());
+      return;
+    }
+    updateSession(userId, { state: "SELECTING_EXPORT", pendingAction: "export" });
+    await ctx.reply(
+      Messages.selectWorkflow(session.deployedWorkflows, "export as JSON"),
+      { parse_mode: "Markdown" }
+    );
+  } catch (err) {
+    console.error("[/export] Error:", err);
+  }
+});
+
 // ─── /templates ───────────────────────────────────────────────────────────────
 bot.command("templates", async (ctx) => {
   try {

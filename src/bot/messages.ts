@@ -10,10 +10,8 @@ Use /jsonup to upload a workflow, or /help to see management commands.`;
   },
 
   help(): string {
-    return `*Workflow Upload:*
+    return `*Workflow Management:*
 /jsonup — deploy a workflow from a KeeperHub JSON file
-
-*Workflow Management:*
 /list — see your workflows
 /pause — pause a workflow
 /resume — resume a workflow

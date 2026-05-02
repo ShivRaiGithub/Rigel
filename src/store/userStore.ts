@@ -1,7 +1,6 @@
 import {
   UserSession,
   DeployedWorkflow,
-  ParsedIntent,
 } from "../workflows/types";
 
 const store = new Map<number, UserSession>();
@@ -10,9 +9,6 @@ function createDefaultSession(userId: number): UserSession {
   return {
     telegramUserId: userId,
     state: "IDLE",
-    currentIntent: null,
-    conversationHistory: [],
-    clarifyingAttempts: 0,
     deployedWorkflows: [],
     pendingAction: null,
     pendingDeleteWorkflow: null,
@@ -50,6 +46,13 @@ export function resetSession(userId: number): void {
     ...createDefaultSession(userId),
     deployedWorkflows: session.deployedWorkflows,
   });
+}
+
+export function replaceWorkflows(
+  userId: number,
+  workflows: DeployedWorkflow[]
+): void {
+  updateSession(userId, { deployedWorkflows: workflows });
 }
 
 /**

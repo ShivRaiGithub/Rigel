@@ -7,57 +7,33 @@ export type WorkflowType =
   | "balance_alert"
   | "unknown";
 
-export type Chain = "ethereum" | "base" | "arbitrum" | "polygon";
-export type Protocol = "aave" | "compound" | "morpho";
-export type Direction = "above" | "below" | "incoming" | "outgoing";
-export type Metric = "healthFactor" | "ltv" | "collateralRatio";
-
-// Parameters extracted from user message by LLM
-export interface ExtractedParams {
-  walletAddress: string | null;
-  token: string | null;
-  threshold: number | null;
-  direction: Direction | null;
-  protocol: Protocol | null;
-  chain: Chain | null;
-  schedule: string | null;
-  metric: Metric | null;
-  minRewardUSD: number | null;
-}
-
-// What the LLM returns after parsing
-export interface ParsedIntent {
-  workflowType: WorkflowType;
-  confidence: number;
-  parameters: ExtractedParams;
-  missingRequired: string[];
-  clarifyingQuestion: string | null;
-}
-
 // Conversation states
 export type ConversationState =
   | "IDLE"
-  | "PARSING"
-  | "CLARIFYING"
-  | "CONFIRMING"
   | "DEPLOYING"
   | "SELECTING_PAUSE"
   | "SELECTING_RESUME"
   | "SELECTING_DELETE"
   | "SELECTING_STATUS"
-  | "CONFIRMING_DELETE";
+  | "SELECTING_RUN"
+  | "SELECTING_EXPORT"
+  | "CONFIRMING_DELETE"
+  | "AWAITING_JSON_UPLOAD";
 
-export type PendingAction = "pause" | "resume" | "delete" | "status" | null;
+export type PendingAction =
+  | "pause"
+  | "resume"
+  | "delete"
+  | "status"
+  | "run"
+  | "export"
+  | null;
 
 // Per-user session stored in memory
 export interface UserSession {
   telegramUserId: number;
   state: ConversationState;
-  currentIntent: ParsedIntent | null;
-  conversationHistory: string[];
-  clarifyingAttempts: number;
   deployedWorkflows: DeployedWorkflow[];
-  // Stage 4: management flow
   pendingAction: PendingAction;
   pendingDeleteWorkflow: DeployedWorkflow | null;
 }
